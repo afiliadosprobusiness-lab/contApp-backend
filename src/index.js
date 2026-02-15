@@ -160,6 +160,14 @@ const mapInvoiceDoc = (id, raw) => {
     cpeError: raw?.cpeError || null,
     cpeLastAttemptAt: toIsoOrNull(raw?.cpeLastAttemptAt),
     cpeAcceptedAt: toIsoOrNull(raw?.cpeAcceptedAt),
+    cpeBetaStatus: raw?.cpeBetaStatus || null,
+    cpeBetaProvider: raw?.cpeBetaProvider || null,
+    cpeBetaTicket: raw?.cpeBetaTicket || null,
+    cpeBetaCode: raw?.cpeBetaCode ?? null,
+    cpeBetaDescription: raw?.cpeBetaDescription ?? null,
+    cpeBetaError: raw?.cpeBetaError || null,
+    cpeBetaLastAttemptAt: toIsoOrNull(raw?.cpeBetaLastAttemptAt),
+    cpeBetaAcceptedAt: toIsoOrNull(raw?.cpeBetaAcceptedAt),
     createdAt: toIsoOrNull(raw?.createdAt),
     updatedAt: toIsoOrNull(raw?.updatedAt),
   };
@@ -563,6 +571,14 @@ app.post("/billing/invoices", requireAuth, async (req, res) => {
         cpeError: null,
         cpeLastAttemptAt: null,
         cpeAcceptedAt: null,
+        cpeBetaStatus: null,
+        cpeBetaProvider: null,
+        cpeBetaTicket: null,
+        cpeBetaCode: null,
+        cpeBetaDescription: null,
+        cpeBetaError: null,
+        cpeBetaLastAttemptAt: null,
+        cpeBetaAcceptedAt: null,
       },
     });
   } catch (error) {
@@ -821,13 +837,64 @@ app.post("/billing/invoices/:invoiceId/emit-cpe", requireAuth, async (req, res) 
       throw asApiError(404, "Invoice not found");
     }
 
+    // Backward compatible: this endpoint validates in BETA.
     const response = await fetch(`${getSunatWorkerUrl()}/sunat/cpe/emit`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: authHeader,
       },
-      body: JSON.stringify({ businessId, invoiceId }),
+      body: JSON.stringify({ businessId, invoiceId, env: "BETA" }),
+      signal: AbortSignal.timeout(actionTimeout),
+    });
+
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw asApiError(response.status, data?.error || "CPE emit failed");
+    }
+
+    const updatedInvoiceSnap = await invoiceRef.get();
+    const invoice = mapInvoiceDoc(updatedInvoiceSnap.id, updatedInvoiceSnap.data() || {});
+    return res.status(200).json({ ok: true, result: data?.result || null, invoice });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    const message = status >= 500 ? "Server error" : error?.message || "Billing error";
+    return res.status(status).json({ error: message });
+  }
+});
+
+app.post("/billing/invoices/:invoiceId/emit-cpe-prod", requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const invoiceId = String(req.params.invoiceId || "").trim();
+    if (!invoiceId) throw asApiError(400, "Missing invoiceId");
+
+    const businessId = String(req.body?.businessId || "").trim();
+    if (!businessId) throw asApiError(400, "Missing businessId");
+
+    const authHeader = String(req.headers.authorization || "").trim();
+    if (!authHeader) throw asApiError(401, "Missing auth token");
+
+    const invoiceRef = firestore
+      .collection("users")
+      .doc(uid)
+      .collection("businesses")
+      .doc(businessId)
+      .collection("invoices")
+      .doc(invoiceId);
+
+    const invoiceSnap = await invoiceRef.get();
+    if (!invoiceSnap.exists) {
+      throw asApiError(404, "Invoice not found");
+    }
+
+    const response = await fetch(`${getSunatWorkerUrl()}/sunat/cpe/emit`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authHeader,
+      },
+      body: JSON.stringify({ businessId, invoiceId, env: "PROD" }),
       signal: AbortSignal.timeout(actionTimeout),
     });
 
