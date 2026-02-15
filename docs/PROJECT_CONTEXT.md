@@ -26,6 +26,12 @@ Backend principal para ContApp: centraliza lógica sensible y secretos. Maneja c
 - `POST /chat` (requiere auth Firebase)
 - `POST /paypal/create-subscription` (requiere auth Firebase)
 - `POST /paypal/webhook` (webhook PayPal)
+- `POST /billing/invoices` (requiere auth Firebase)
+- `GET /billing/invoices` (requiere auth Firebase)
+- `GET /billing/invoices/:invoiceId/payments` (requiere auth Firebase)
+- `POST /billing/invoices/:invoiceId/payments` (requiere auth Firebase)
+- `POST /billing/invoices/:invoiceId/mark-paid` (requiere auth Firebase)
+- `POST /billing/invoices/:invoiceId/emit-cpe` (requiere auth Firebase; relay a worker SUNAT)
 
 ## Convenciones de código
 - ESM (`type: module`).
@@ -38,4 +44,38 @@ Backend principal para ContApp: centraliza lógica sensible y secretos. Maneja c
 - `PAYPAL_ENV`, `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `PAYPAL_WEBHOOK_ID`
 - `PAYPAL_PLAN_ID_PRO`, `PAYPAL_PLAN_ID_PLUS`
 - `CORS_ORIGIN`, `APP_BASE_URL`
+- `SUNAT_WORKER_URL`
+- `REQUEST_TIMEOUT_MS`
 
+## Actualizacion 2026-02-15
+
+### Billing API
+- Se incorpora modulo `billing` para emitir documentos y gestionar cobranzas.
+- La emision persiste en:
+  - `users/{uid}/businesses/{businessId}/invoices/{invoiceId}`
+  - `users/{uid}/businesses/{businessId}/comprobantes/{comprobanteId}` (compatibilidad dashboard legacy)
+- La cobranza parcial/total persiste en:
+  - `users/{uid}/businesses/{businessId}/invoices/{invoiceId}/payments/{paymentId}`
+
+### Reglas de negocio en backend
+- Unicidad de comprobante por `documentType + serie + numero` dentro del negocio (id deterministico por hash).
+- `FACTURA` solo acepta `customerDocumentType = RUC`.
+- `dueDate` no puede ser menor a `issueDate`.
+- Abonos no pueden exceder el saldo.
+- Actualizacion transaccional de `paidAmount`, `balance`, `paymentStatus` en cada pago.
+
+## Actualizacion 2026-02-15 (fase CPE)
+
+### Relay CPE hacia worker SUNAT
+- El backend incorpora `POST /billing/invoices/:invoiceId/emit-cpe`.
+- El endpoint valida autenticacion y existencia de factura, luego reenvia la solicitud a `POST {SUNAT_WORKER_URL}/sunat/cpe/emit`.
+- Se reusa el mismo Firebase ID Token del usuario para mantener trazabilidad/seguridad en worker.
+
+### Campos CPE expuestos por Billing API
+- `GET /billing/invoices` ahora retorna tambien:
+  - `cpeStatus`
+  - `cpeProvider`
+  - `cpeTicket`
+  - `cpeCode`, `cpeDescription`
+  - `cpeError`
+  - `cpeLastAttemptAt`, `cpeAcceptedAt`

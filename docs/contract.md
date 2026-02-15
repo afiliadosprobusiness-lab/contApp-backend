@@ -195,6 +195,21 @@ Respuestas:
 - `400`: `{ error: "Missing businessId" }`
 - `401`: auth error
 
+### `POST /sunat/cpe/emit` (Bearer Firebase requerido)
+
+Body requerido:
+
+- `businessId`
+- `invoiceId`
+
+Respuestas:
+
+- `200`: `{ ok: true, result }`
+- `400`: `{ error: "Missing fields" }` o validaciones de payload CPE
+- `401`: auth error
+- `404`: `{ error: "Business not found" | "Invoice not found" }`
+- `500`: `{ error: "CPE emit failed" }`
+
 ## Endpoints serverless en frontend (`contApp-peru/api/*`)
 
 Codigo observado:
@@ -240,3 +255,134 @@ Comportamientos actuales que el frontend y dashboard consumen:
   - `status: "IDLE"` (string) o
   - `status: { ... }` (objeto)
 - Firestore realtime del frontend depende de los nombres actuales de campos en `users`, `businesses`, `comprobantes` y `sunat_sync`.
+
+## Extensiones de contrato (Billing API - backend principal)
+
+### `POST /billing/invoices` (Bearer Firebase requerido)
+
+Body requerido:
+- `businessId`
+- `documentType` (`FACTURA|BOLETA`)
+- `serie`
+- `numero`
+- `customerName`
+- `customerDocumentType` (`RUC|DNI|OTRO`)
+- `customerDocumentNumber`
+- `issueDate`
+- `items[]` (`description`, `quantity`, `unitPrice`, `taxRate`)
+
+Body opcional:
+- `dueDate`
+
+Respuestas:
+- `201`: `{ ok: true, invoice }`
+- `400`: validaciones (`Missing businessId`, `Invalid documentType`, `Missing items`, etc.)
+- `401`: auth error
+- `404`: `{ error: "Business not found" }`
+- `409`: `{ error: "Invoice already exists" }`
+- `500`: `{ error: "Server error" }`
+
+Notas:
+- Genera documento en `invoices`.
+- Escribe tambien en `comprobantes` con `source: FACTURACION_BACKEND` por compatibilidad.
+
+### `GET /billing/invoices?businessId=...&documentType=...&paymentStatus=...&limit=...` (Bearer Firebase requerido)
+
+Respuestas:
+- `200`: `{ ok: true, invoices: [] }`
+- `400`: validaciones de query
+- `401`: auth error
+- `404`: `{ error: "Business not found" }`
+- `500`: `{ error: "Server error" }`
+
+### `GET /billing/invoices/:invoiceId/payments?businessId=...` (Bearer Firebase requerido)
+
+Respuestas:
+- `200`: `{ ok: true, payments: [] }`
+- `400`: query/params invalidos
+- `401`: auth error
+- `404`: `{ error: "Invoice not found" }`
+- `500`: `{ error: "Server error" }`
+
+### `POST /billing/invoices/:invoiceId/payments` (Bearer Firebase requerido)
+
+Body requerido:
+- `businessId`
+- `amount`
+
+Body opcional:
+- `paymentDate`
+- `note`
+
+Respuestas:
+- `200`: `{ ok: true, paymentId, paidAmount, balance, paymentStatus }`
+- `400`: validaciones (`Invalid amount`, `Amount exceeds balance`, etc.)
+- `401`: auth error
+- `404`: `{ error: "Invoice not found" }`
+- `500`: `{ error: "Server error" }`
+
+### `POST /billing/invoices/:invoiceId/mark-paid` (Bearer Firebase requerido)
+
+Body requerido:
+- `businessId`
+
+Body opcional:
+- `paymentDate`
+- `note`
+
+Respuestas:
+- `200`: `{ ok: true, paymentId|null, paidAmount, balance, paymentStatus }`
+- `400`: validaciones
+- `401`: auth error
+- `404`: `{ error: "Invoice not found" }`
+- `500`: `{ error: "Server error" }`
+
+### `POST /billing/invoices/:invoiceId/emit-cpe` (Bearer Firebase requerido)
+
+Body requerido:
+- `businessId`
+
+Respuestas:
+- `200`: `{ ok: true, result, invoice }`
+- `400`: validaciones (`Missing businessId`, `Missing invoiceId`, etc.)
+- `401`: auth error
+- `404`: `{ error: "Invoice not found" }`
+- `500`: `{ error: "Server error" }`
+
+## Campos Firestore agregados
+
+### `users/{uid}/businesses/{businessId}/invoices/{invoiceId}`
+
+Campos observados:
+- `documentType`, `serie`, `numero`
+- `customerName`, `customerDocumentType`, `customerDocumentNumber`
+- `issueDate`, `dueDate`
+- `subtotal`, `igv`, `total`
+- `paidAmount`, `balance`, `paymentStatus`
+- `status` (`EMITIDO`)
+- `source` (`BACKEND`)
+- `items[]`
+- `cpeStatus` (`ACEPTADO|RECHAZADO|ERROR|null`)
+- `cpeProvider`, `cpeTicket`
+- `cpeCode`, `cpeDescription`
+- `cpeError`
+- `cpeLastAttemptAt`, `cpeAcceptedAt`
+- `createdBy`, `createdAt`, `updatedAt`
+
+### `users/{uid}/businesses/{businessId}/invoices/{invoiceId}/payments/{paymentId}`
+
+Campos observados:
+- `amount`
+- `paymentDate`
+- `note`
+- `createdBy`, `createdAt`
+
+## Changelog del Contrato
+- Fecha: 2026-02-15
+- Cambio: Se agregan endpoints `billing` para emision, consulta y cobranza parcial/total.
+- Tipo: non-breaking
+- Impacto: habilita backend de facturacion y abonos sin romper contratos existentes de chat/paypal/sunat.
+- Fecha: 2026-02-15
+- Cambio: Se agrega emision CPE (`/billing/invoices/:invoiceId/emit-cpe`) via relay a worker SUNAT y campos CPE en `invoices`.
+- Tipo: non-breaking
+- Impacto: habilita envio/reenvio CPE por comprobante sin romper contratos existentes.
