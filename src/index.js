@@ -72,6 +72,7 @@ const BILLING_DOC_TYPES = new Set(["FACTURA", "BOLETA"]);
 const BILLING_CUSTOMER_DOC_TYPES = new Set(["RUC", "DNI", "OTRO"]);
 const BILLING_PAYMENT_STATUSES = new Set(["PENDIENTE", "PARCIAL", "PAGADO", "VENCIDO"]);
 const DECIMAL_EPSILON = 0.000001;
+const SUNAT_CDR_ENVS = new Set(["BETA", "PROD"]);
 
 const asApiError = (status, message) => {
   const error = new Error(message);
@@ -113,6 +114,13 @@ const toIsoOrNull = (value) => {
 
 const buildInvoiceId = (documentType, serie, numero) =>
   crypto.createHash("sha1").update(`${documentType}|${serie}|${numero}`).digest("hex");
+
+const docTypeCode = (documentType) => {
+  const value = String(documentType || "").trim().toUpperCase();
+  if (value === "FACTURA") return "01";
+  if (value === "BOLETA") return "03";
+  return null;
+};
 
 const normalizePaymentStatus = (status, balance, dueDate) => {
   if (balance <= DECIMAL_EPSILON) return "PAGADO";
@@ -906,6 +914,48 @@ app.post("/billing/invoices/:invoiceId/emit-cpe-prod", requireAuth, async (req, 
     const updatedInvoiceSnap = await invoiceRef.get();
     const invoice = mapInvoiceDoc(updatedInvoiceSnap.id, updatedInvoiceSnap.data() || {});
     return res.status(200).json({ ok: true, result: data?.result || null, invoice });
+  } catch (error) {
+    const status = Number(error?.status) || 500;
+    const message = status >= 500 ? "Server error" : error?.message || "Billing error";
+    return res.status(status).json({ error: message });
+  }
+});
+
+app.get("/billing/invoices/:invoiceId/cdr", requireAuth, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const businessId = parseBusinessQuery(req);
+    const invoiceId = String(req.params.invoiceId || "").trim();
+    if (!invoiceId) throw asApiError(400, "Missing invoiceId");
+
+    const env = String(req.query.env || "PROD").trim().toUpperCase();
+    if (!SUNAT_CDR_ENVS.has(env)) {
+      throw asApiError(400, "Invalid env");
+    }
+
+    const businessRef = firestore.collection("users").doc(uid).collection("businesses").doc(businessId);
+    const invoiceRef = businessRef.collection("invoices").doc(invoiceId);
+
+    const [businessSnap, invoiceSnap] = await Promise.all([businessRef.get(), invoiceRef.get()]);
+    if (!businessSnap.exists) throw asApiError(404, "Business not found");
+    if (!invoiceSnap.exists) throw asApiError(404, "Invoice not found");
+
+    const business = businessSnap.data() || {};
+    const invoice = invoiceSnap.data() || {};
+
+    const prefix = env === "PROD" ? "cpe" : "cpeBeta";
+    const zipBase64 = invoice?.[`${prefix}ZipBase64`] || null;
+    if (!zipBase64) {
+      throw asApiError(404, "CDR not found");
+    }
+
+    const ruc = String(business?.ruc || "").trim() || "RUC";
+    const typeCode = docTypeCode(invoice?.documentType) || "XX";
+    const serie = String(invoice?.serie || "S").trim().toUpperCase();
+    const numero = String(invoice?.numero || "0").trim().toUpperCase();
+    const filename = `R-${ruc}-${typeCode}-${serie}-${numero}.zip`;
+
+    return res.status(200).json({ ok: true, filename, zipBase64 });
   } catch (error) {
     const status = Number(error?.status) || 500;
     const message = status >= 500 ? "Server error" : error?.message || "Billing error";
