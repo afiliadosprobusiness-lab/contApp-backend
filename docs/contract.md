@@ -349,6 +349,34 @@ Respuestas:
 - `404`: `{ error: "Invoice not found" }`
 - `500`: `{ error: "Server error" }`
 
+Notas:
+- Este endpoint se usa como **validacion en BETA** (SUNAT pruebas).
+
+### `POST /billing/invoices/:invoiceId/emit-cpe-prod` (Bearer Firebase requerido)
+
+Body requerido:
+- `businessId`
+
+Respuestas:
+- `200`: `{ ok: true, result, invoice }`
+- `400`: validaciones (`Missing businessId`, `Missing invoiceId`, etc.)
+- `401`: auth error
+- `404`: `{ error: "Invoice not found" }`
+- `500`: `{ error: "Server error" }`
+
+Notas:
+- Este endpoint realiza **emision real en PROD** (SUNAT produccion).
+- En UI se recomienda ejecutar primero validacion BETA y luego confirmar emision PROD.
+
+### `GET /billing/invoices/:invoiceId/cdr?businessId=...&env=PROD|BETA` (Bearer Firebase requerido)
+
+Respuestas:
+- `200`: `{ ok: true, filename, zipBase64 }`
+- `400`: validaciones (`Missing businessId`, `Invalid env`, etc.)
+- `401`: auth error
+- `404`: `{ error: "CDR not found" | "Invoice not found" | "Business not found" }`
+- `500`: `{ error: "Server error" }`
+
 ## Campos Firestore agregados
 
 ### `users/{uid}/businesses/{businessId}/invoices/{invoiceId}`
@@ -365,8 +393,15 @@ Campos observados:
 - `cpeStatus` (`ACEPTADO|RECHAZADO|ERROR|null`)
 - `cpeProvider`, `cpeTicket`
 - `cpeCode`, `cpeDescription`
+- `cpeZipBase64`
 - `cpeError`
 - `cpeLastAttemptAt`, `cpeAcceptedAt`
+- `cpeBetaStatus` (`ACEPTADO|RECHAZADO|ERROR|null`)
+- `cpeBetaProvider`, `cpeBetaTicket`
+- `cpeBetaCode`, `cpeBetaDescription`
+- `cpeBetaZipBase64`
+- `cpeBetaError`
+- `cpeBetaLastAttemptAt`, `cpeBetaAcceptedAt`
 - `createdBy`, `createdAt`, `updatedAt`
 
 ### `users/{uid}/businesses/{businessId}/invoices/{invoiceId}/payments/{paymentId}`
@@ -386,3 +421,7 @@ Campos observados:
 - Cambio: Se agrega emision CPE (`/billing/invoices/:invoiceId/emit-cpe`) via relay a worker SUNAT y campos CPE en `invoices`.
 - Tipo: non-breaking
 - Impacto: habilita envio/reenvio CPE por comprobante sin romper contratos existentes.
+- Fecha: 2026-02-15
+- Cambio: Se agrega flujo BETA->PROD (`emit-cpe-prod`), persistencia `cpeBeta*` y descarga de CDR (`GET /billing/invoices/:invoiceId/cdr`).
+- Tipo: non-breaking
+- Impacto: habilita validacion previa en SUNAT (BETA) y emision real (PROD) con descarga del CDR.

@@ -32,6 +32,8 @@ Backend principal para ContApp: centraliza lógica sensible y secretos. Maneja c
 - `POST /billing/invoices/:invoiceId/payments` (requiere auth Firebase)
 - `POST /billing/invoices/:invoiceId/mark-paid` (requiere auth Firebase)
 - `POST /billing/invoices/:invoiceId/emit-cpe` (requiere auth Firebase; relay a worker SUNAT)
+- `POST /billing/invoices/:invoiceId/emit-cpe-prod` (requiere auth Firebase; emision real PROD)
+- `GET /billing/invoices/:invoiceId/cdr` (requiere auth Firebase; descarga CDR ZIP base64)
 
 ## Convenciones de código
 - ESM (`type: module`).
@@ -79,3 +81,15 @@ Backend principal para ContApp: centraliza lógica sensible y secretos. Maneja c
   - `cpeCode`, `cpeDescription`
   - `cpeError`
   - `cpeLastAttemptAt`, `cpeAcceptedAt`
+
+## Actualizacion 2026-02-15 (fase CPE BETA->PROD)
+
+### Validacion y emision separadas
+- Validacion (SUNAT BETA): `POST /billing/invoices/:invoiceId/emit-cpe`
+- Emision real (SUNAT PROD): `POST /billing/invoices/:invoiceId/emit-cpe-prod`
+- Descarga CDR: `GET /billing/invoices/:invoiceId/cdr?env=PROD|BETA`
+
+### Persistencia
+- El worker escribe resultado separado en la factura:
+  - `cpeBeta*` para validacion BETA
+  - `cpe*` para emision PROD
